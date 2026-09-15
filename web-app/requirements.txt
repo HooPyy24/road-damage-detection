@@ -3,8 +3,8 @@ uvicorn
 gunicorn
 python-multipart
 ultralytics
-torch --extra-index-url https://download.pytorch.org/whl/cpu
-torchvision --extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
 pillow
 opencv-python-headless
 numpy
