@@ -1,0 +1,13 @@
+runs_road_damage/
+BobileNetV3/temp_data/
+*.avi
+*.mp4
+*.tar.gz
+*.zip
+*.pt
+*.onnx
+__pycache__/
+venv/
+node_modules/
+dist/
+.env
