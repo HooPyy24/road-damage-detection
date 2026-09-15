@@ -17,12 +17,12 @@ from ultralytics import YOLO
 
 app = FastAPI()
 
-# 1. ตั้งค่า CORS
+# 1. ตั้งค่า CORS (ปรับแก้ให้รองรับ OPTIONS และเปิดกว้างสำหรับ Cross-Origin)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"]
 )
