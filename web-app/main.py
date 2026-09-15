@@ -5,10 +5,12 @@ import os
 import base64
 import torch
 import torch.nn as nn
+import gc
+
 from torchvision import models, transforms
 from PIL import Image
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
@@ -47,6 +49,23 @@ transform = transforms.Compose([
 # 3. โหลด YOLOv8 Detector
 yolo_model = YOLO("best.pt") # หรือ Path โมเดล YOLOv8 ของคุณ
 
+
+def cleanup_ram():
+    """ฟังก์ชันเคลียร์ RAM หลังจบการทำงาน"""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def remove_file(path: str):
+    """ฟังก์ชันลบไฟล์ชั่วคราวหลังส่ง Video FileResponse ให้ Client เสร็จแล้ว"""
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception as e:
+            print(f"Error removing temp file: {e}")
+
+
 def check_is_road(cv2_img) -> bool:
     """ฟังก์ชันคัดกรองรูปภาพด้วย MobileNetV3"""
     rgb_img = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)
@@ -68,97 +87,119 @@ def check_is_road(cv2_img) -> bool:
     # ต้องเป็น Class 1 (road) และมีความน่าจะเป็นมากกว่า 70% (0.7) ถึงจะยอมให้ผ่าน
     return (road_prob > non_road_prob) and (road_prob >= 0.7)
 
+
 # --- Endpoint สำหรับรูปภาพ ---
 @app.post("/predict")
 async def predict_image(file: UploadFile = File(...)):
-    contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    try:
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-    # คัดกรองภาพก่อนเข้า YOLO
-    if not check_is_road(img):
+        # คัดกรองภาพก่อนเข้า YOLO
+        if not check_is_road(img):
+            return {
+                "is_valid": False,
+                "message": "ภาพที่อัปโหลดไม่ใช่ภาพถนน กรุณาอัปโหลดภาพถนนใหม่อีกครั้ง",
+                "total_detected": 0,
+                "summary": {},
+                "image_base64": None
+            }
+
+        # ถ้ารูปผ่านการคัดกรอง ให้ประมวลผลด้วย YOLOv8
+        results = yolo_model(img)
+        annotated_frame = results[0].plot()
+
+        summary = {}
+        for box in results[0].boxes:
+            cls_id = int(box.cls[0])
+            cls_name = yolo_model.names[cls_id]
+            summary[cls_name] = summary.get(cls_name, 0) + 1
+
+        _, buffer = cv2.imencode('.jpg', annotated_frame)
+        img_str = base64.b64encode(buffer).decode('utf-8')
+
         return {
-            "is_valid": False,
-            "message": "ภาพที่อัปโหลดไม่ใช่ภาพถนน กรุณาอัปโหลดภาพถนนใหม่อีกครั้ง",
-            "total_detected": 0,
-            "summary": {},
-            "image_base64": None
+            "is_valid": True,
+            "total_detected": len(results[0].boxes),
+            "summary": summary,
+            "image_base64": f"data:image/jpeg;base64,{img_str}"
         }
 
-    # ถ้ารูปผ่านการคัดกรอง ให้ประมวลผลด้วย YOLOv8
-    results = yolo_model(img)
-    annotated_frame = results[0].plot()
+    finally:
+        # สั่งคืนหน่วยความจำทันทีที่ทำงานเสร็จ
+        cleanup_ram()
 
-    summary = {}
-    for box in results[0].boxes:
-        cls_id = int(box.cls[0])
-        cls_name = yolo_model.names[cls_id]
-        summary[cls_name] = summary.get(cls_name, 0) + 1
-
-    _, buffer = cv2.imencode('.jpg', annotated_frame)
-    img_str = base64.b64encode(buffer).decode('utf-8')
-
-    return {
-        "is_valid": True,
-        "total_detected": len(results[0].boxes),
-        "summary": summary,
-        "image_base64": f"data:image/jpeg;base64,{img_str}"
-    }
 
 # --- Endpoint สำหรับวิดีโอ ---
 @app.post("/predict-video")
-async def predict_video(file: UploadFile = File(...)):
+async def predict_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     temp_in = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-    temp_in.write(await file.read())
-    temp_in.close()
-
     output_path = temp_in.name.replace(".mp4", "_out.mp4")
 
-    cap = cv2.VideoCapture(temp_in.name)
-    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps    = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+    try:
+        temp_in.write(await file.read())
+        temp_in.close()
 
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        cap = cv2.VideoCapture(temp_in.name)
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps    = int(cap.get(cv2.CAP_PROP_FPS)) or 30
 
-    # อ่านเฟรมแรกมาเช็คก่อนว่าเป็นวิดีโอเกี่ยวกับถนนหรือไม่
-    ret, first_frame = cap.read()
-    if not ret or not check_is_road(first_frame):
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        # อ่านเฟรมแรกมาเช็คก่อนว่าเป็นวิดีโอเกี่ยวกับถนนหรือไม่
+        ret, first_frame = cap.read()
+        if not ret or not check_is_road(first_frame):
+            cap.release()
+            out.release()
+            if os.path.exists(temp_in.name): os.remove(temp_in.name)
+            if os.path.exists(output_path): os.remove(output_path)
+            return {
+                "is_valid": False,
+                "message": "วิดีโอที่อัปโหลดไม่ใช่เนื้อหาเกี่ยวกับถนน กรุณาตรวจสอบอีกครั้ง"
+            }
+
+        # เขียนเฟรมแรกเข้าไฟล์ผลลัพธ์
+        results = yolo_model(first_frame)
+        out.write(results[0].plot())
+
+        # ประมวลผลเฟรมที่เหลือ
+        frame_count = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            results = yolo_model(frame)
+            annotated_frame = results[0].plot()
+            out.write(annotated_frame)
+
+            frame_count += 1
+            # เคลียร์ memory ย่อยๆ ทุกๆ 30 เฟรม ป้องกัน RAM สะสม
+            if frame_count % 30 == 0:
+                cleanup_ram()
+
         cap.release()
         out.release()
-        if os.path.exists(temp_in.name): os.remove(temp_in.name)
-        if os.path.exists(output_path): os.remove(output_path)
-        return {
-            "is_valid": False,
-            "message": "วิดีโอที่อัปโหลดไม่ใช่เนื้อหาเกี่ยวกับถนน กรุณาตรวจสอบอีกครั้ง"
-        }
 
-    # เขียนเฟรมแรกเข้าไฟล์ผลลัพธ์
-    results = yolo_model(first_frame)
-    out.write(results[0].plot())
+        # ตั้งค่าให้ลบไฟล์ผลลัพธ์วิดีโอออกจาก Disk หลังจากส่งให้ Client สำเร็จแล้ว
+        background_tasks.add_task(remove_file, output_path)
 
-    # ประมวลผลเฟรมที่เหลือ
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+        return FileResponse(
+            output_path, 
+            media_type="video/mp4", 
+            filename="processed_video.mp4"
+        )
 
-        results = yolo_model(frame)
-        annotated_frame = results[0].plot()
-        out.write(annotated_frame)
+    finally:
+        # ลบไฟล์ขาเข้า และเคลียร์ RAM
+        if os.path.exists(temp_in.name):
+            os.remove(temp_in.name)
+        cleanup_ram()
 
-    cap.release()
-    out.release()
-    
-    if os.path.exists(temp_in.name):
-        os.remove(temp_in.name)
 
-    return FileResponse(
-        output_path, 
-        media_type="video/mp4", 
-        filename="processed_video.mp4"
-    )
 @app.get("/")
 async def root():
     return {"status": "online", "message": "Road Damage Detection API is running"}
