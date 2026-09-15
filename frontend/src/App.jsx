@@ -81,7 +81,8 @@ function App() {
 
     try {
       if (isVideo) {
-        const response = await axios.post('http://127.0.0.1:8000/predict-video', formData, {
+        // บรรทัดที่ 84 (สำหรับการอัปโหลดวิดีโอ)
+          const response = await axios.post('https://road-damage-detection-0h33.onrender.com/predict-video', formData, {
           ...axiosConfig,
           responseType: 'blob'
         })
@@ -102,7 +103,7 @@ function App() {
         setVideoResultUrl(videoBlobUrl)
 
       } else {
-        const response = await axios.post('http://127.0.0.1:8000/predict', formData, axiosConfig)
+        const response = await axios.post('https://road-damage-detection-0h33.onrender.com/predict', formData, axiosConfig)
 
         if (response.data.is_valid === false) {
           showModal(
