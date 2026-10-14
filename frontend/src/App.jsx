@@ -1,17 +1,20 @@
 import { useState } from 'react'
 import axios from 'axios'
 import './App.css'
+import RealtimeDetector from './RealtimeDetector'
+
+const API_BASE_URL = 'http://127.0.0.1:8000'
 
 function App() {
+  const [activeMode, setActiveMode] = useState('upload') // 'upload' หรือ 'realtime'
   const [selectedFile, setSelectedFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [resultData, setResultData] = useState(null)
   const [videoResultUrl, setVideoResultUrl] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0) // State เก็บ % การอัปโหลด
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [isDragOver, setIsDragOver] = useState(false)
 
-  // State สำหรับจัดการ Alert Modal Popup (กรณีไม่ใช่ภาพ/วิดีโอถนน)
   const [modalConfig, setModalConfig] = useState({
     isOpen: false,
     title: '',
@@ -59,7 +62,7 @@ function App() {
     }
 
     setLoading(true)
-    setUploadProgress(0) // รีเซ็ต Progress เป็น 0%
+    setUploadProgress(0)
     setResultData(null)
     setVideoResultUrl(null)
 
@@ -68,7 +71,6 @@ function App() {
 
     const isVideo = selectedFile.type.startsWith('video/')
 
-    // Config สำหรับติดตาม Progress ในการส่งไฟล์
     const axiosConfig = {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (progressEvent) => {
@@ -81,8 +83,7 @@ function App() {
 
     try {
       if (isVideo) {
-        // บรรทัดที่ 84 (สำหรับการอัปโหลดวิดีโอ)
-          const response = await axios.post('https://road-damage-detection-0h33.onrender.com/predict-video', formData, {
+        const response = await axios.post(`${API_BASE_URL}/predict-video`, formData, {
           ...axiosConfig,
           responseType: 'blob'
         })
@@ -103,7 +104,7 @@ function App() {
         setVideoResultUrl(videoBlobUrl)
 
       } else {
-        const response = await axios.post('https://road-damage-detection-0h33.onrender.com/predict', formData, axiosConfig)
+        const response = await axios.post(`${API_BASE_URL}/predict`, formData, axiosConfig)
 
         if (response.data.is_valid === false) {
           showModal(
@@ -157,105 +158,145 @@ function App() {
           ระบบวิเคราะห์ความเสียหายบนพื้นผิวถนน
         </h1>
         <p>Road Damage Detection Platform · Powered by YOLOv8s AI</p>
+
+        {/* ปุ่มสลับโหมดการทำงาน */}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '15px' }}>
+          <button 
+            onClick={() => setActiveMode('upload')}
+            style={{
+              padding: '8px 18px',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: activeMode === 'upload' ? '#0284c7' : '#334155',
+              color: '#fff',
+              fontWeight: 'bold',
+              transition: 'all 0.2s'
+            }}
+          >
+            📁 อัปโหลด ไฟล์
+          </button>
+          <button 
+            onClick={() => setActiveMode('realtime')}
+            style={{
+              padding: '8px 18px',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: activeMode === 'realtime' ? '#0284c7' : '#334155',
+              color: '#fff',
+              fontWeight: 'bold',
+              transition: 'all 0.2s'
+            }}
+          >
+            📹 กล้องสด (Real-time)
+          </button>
+        </div>
       </div>
 
       <div className="main-container">
-        <div className="info-box">
-          <span className="info-title">💡 คำแนะนำ:</span>
-          <span>ถ่ายหรือเลือกภาพ/วิดีโอถนน "เน้นกลางภาพ" จัดให้รอยแตกหรือหลุมอยู่ในเฟรมหลัก เพื่อความแม่นยำสูงสุด</span>
-        </div>
-
-        <div className="upload-card">
-          <h2>อัปโหลดรูปภาพหรือวิดีโอถนน</h2>
-
-          <div 
-            className={`dropzone ${loading ? 'disabled' : ''}`}
-            style={{ borderColor: isDragOver ? '#38bdf8' : '#0284c7' }}
-            onDragOver={!loading ? handleDragOver : undefined}
-            onDragLeave={!loading ? handleDragLeave : undefined}
-            onDrop={!loading ? handleDrop : undefined}
-            onClick={() => !loading && document.getElementById('fileInput').click()}
-          >
-            <input 
-              id="fileInput"
-              type="file" 
-              accept="image/*,video/*" 
-              style={{ display: 'none' }}
-              disabled={loading}
-              onChange={(e) => handleFile(e.target.files[0])} 
-            />
-            
-            <div className="camera-icon">📷📹</div>
-            
-            {selectedFile ? (
-              <div className="file-name-tag">
-                📄 {selectedFile.name}
-              </div>
-            ) : (
-              <>
-                <div className="dropzone-text">คลิกหรือลากรูปภาพ/วิดีโอมาวางที่นี่</div>
-                <div className="dropzone-subtext">รองรับ PNG, JPG, MP4, AVI, MOV</div>
-              </>
-            )}
-          </div>
-
-          <button 
-            className="btn-submit"
-            onClick={handleUpload} 
-            disabled={loading || !selectedFile}
-          >
-            🔍 {loading ? (isVideoFile ? 'กำลังส่งข้อมูลวิดีโอ...' : 'กำลังวิเคราะห์ด้วย AI...') : 'ตรวจจับความเสียหาย'}
-          </button>
-        </div>
-
-        {((resultData && resultData.is_valid) || videoResultUrl) && (
-          <div className="results-section">
-            <div className="section-title">📊 สรุปผลการตรวจจับ</div>
-            
-            {resultData && resultData.is_valid && (
-              <div className="summary-grid">
-                <div className="summary-card total">
-                  <div className="num">{resultData.total_detected}</div>
-                  <div className="lbl">ความเสียหายทั้งหมด</div>
-                </div>
-                {Object.entries(resultData.summary).map(([clsName, count]) => (
-                  <div key={clsName} className="summary-card">
-                    <div className="num">{count}</div>
-                    <div className="lbl">{clsName}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="image-grid">
-              {preview && (
-                <div className="image-card">
-                  <div className="image-card-header">
-                    <h3>📷 ต้นฉบับ ({isVideoFile ? 'วิดีโอ' : 'รูปภาพ'})</h3>
-                  </div>
-                  {isVideoFile ? (
-                    <video src={preview} controls style={{ width: '100%', borderRadius: '8px' }} />
-                  ) : (
-                    <img src={preview} alt="Original" />
-                  )}
-                </div>
-              )}
-
-              <div className="image-card">
-                <div className="image-card-header">
-                  <h3>🎯 ผลการตรวจจับ (YOLOv8)</h3>
-                </div>
-                {isVideoFile ? (
-                  videoResultUrl && <video src={videoResultUrl} controls style={{ width: '100%', borderRadius: '8px' }} />
-                ) : (
-                  resultData && <img src={resultData.image_base64} alt="Detection Result" />
-                )}
-                <button className="btn-download" onClick={handleDownload}>
-                  ⬇️ ดาวน์โหลด{isVideoFile ? 'วิดีโอ' : 'รูปภาพ'}ผลลัพธ์
-                </button>
-              </div>
+        {activeMode === 'realtime' ? (
+          <RealtimeDetector />
+        ) : (
+          <>
+            <div className="info-box">
+              <span className="info-title">💡 คำแนะนำ:</span>
+              <span>ถ่ายหรือเลือกภาพ/วิดีโอถนน "เน้นกลางภาพ" จัดให้รอยแตกหรือหลุมอยู่ในเฟรมหลัก เพื่อความแม่นยำสูงสุด</span>
             </div>
-          </div>
+
+            <div className="upload-card">
+              <h2>อัปโหลดรูปภาพหรือวิดีโอถนน</h2>
+
+              <div 
+                className={`dropzone ${loading ? 'disabled' : ''}`}
+                style={{ borderColor: isDragOver ? '#38bdf8' : '#0284c7' }}
+                onDragOver={!loading ? handleDragOver : undefined}
+                onDragLeave={!loading ? handleDragLeave : undefined}
+                onDrop={!loading ? handleDrop : undefined}
+                onClick={() => !loading && document.getElementById('fileInput').click()}
+              >
+                <input 
+                  id="fileInput"
+                  type="file" 
+                  accept="image/*,video/*" 
+                  style={{ display: 'none' }}
+                  disabled={loading}
+                  onChange={(e) => handleFile(e.target.files[0])} 
+                />
+                
+                <div className="camera-icon">📷📹</div>
+                
+                {selectedFile ? (
+                  <div className="file-name-tag">
+                    📄 {selectedFile.name}
+                  </div>
+                ) : (
+                  <>
+                    <div className="dropzone-text">คลิกหรือลากรูปภาพ/วิดีโอมาวางที่นี่</div>
+                    <div className="dropzone-subtext">รองรับ PNG, JPG, MP4, AVI, MOV</div>
+                  </>
+                )}
+              </div>
+
+              <button 
+                className="btn-submit"
+                onClick={handleUpload} 
+                disabled={loading || !selectedFile}
+              >
+                🔍 {loading ? (isVideoFile ? 'กำลังส่งข้อมูลวิดีโอ...' : 'กำลังวิเคราะห์ด้วย AI...') : 'ตรวจจับความเสียหาย'}
+              </button>
+            </div>
+
+            {((resultData && resultData.is_valid) || videoResultUrl) && (
+              <div className="results-section">
+                <div className="section-title">📊 สรุปผลการตรวจจับ</div>
+                
+                {resultData && resultData.is_valid && (
+                  <div className="summary-grid">
+                    <div className="summary-card total">
+                      <div className="num">{resultData.total_detected}</div>
+                      <div className="lbl">ความเสียหายทั้งหมด</div>
+                    </div>
+                    {Object.entries(resultData.summary).map(([clsName, count]) => (
+                      <div key={clsName} className="summary-card">
+                        <div className="num">{count}</div>
+                        <div className="lbl">{clsName}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="image-grid">
+                  {preview && (
+                    <div className="image-card">
+                      <div className="image-card-header">
+                        <h3>📷 ต้นฉบับ ({isVideoFile ? 'วิดีโอ' : 'รูปภาพ'})</h3>
+                      </div>
+                      {isVideoFile ? (
+                        <video src={preview} controls style={{ width: '100%', borderRadius: '8px' }} />
+                      ) : (
+                        <img src={preview} alt="Original" />
+                      )}
+                    </div>
+                  )}
+
+                  <div className="image-card">
+                    <div className="image-card-header">
+                      <h3>🎯 ผลการตรวจจับ (YOLOv8)</h3>
+                    </div>
+                    {isVideoFile ? (
+                      videoResultUrl && <video src={videoResultUrl} controls style={{ width: '100%', borderRadius: '8px' }} />
+                    ) : (
+                      resultData && <img src={resultData.image_base64} alt="Detection Result" />
+                    )}
+                    <button className="btn-download" onClick={handleDownload}>
+                      ⬇️ ดาวน์โหลด{isVideoFile ? 'วิดีโอ' : 'รูปภาพ'}ผลลัพธ์
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         <div className="footer">
@@ -263,7 +304,7 @@ function App() {
         </div>
       </div>
 
-      {/* --- Progress Modal (เด้งล็อกหน้าจอตอนกำลังส่งไฟล์) --- */}
+      {/* --- Progress Modal --- */}
       {loading && (
         <div className="progress-overlay">
           <div className="progress-card">
@@ -291,7 +332,7 @@ function App() {
         </div>
       )}
 
-      {/* --- Custom Alert Modal (แจ้งเตือนรูปไม่ใช่ถนน) --- */}
+      {/* --- Custom Alert Modal --- */}
       {modalConfig.isOpen && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>

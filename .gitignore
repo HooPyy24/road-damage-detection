@@ -11,3 +11,16 @@ venv/
 node_modules/
 dist/
 .env
+# Dependencies
+node_modules/
+__pycache__/
+
+# Large Models (ป้องกันไฟล์ใหญ่เกินขีดจำกัด GitHub)
+*.onnx
+*.pt
+*.pth
+
+# Environment & Build files
+.env
+dist/
+build/
